@@ -8,7 +8,9 @@ dependencies:
   - pytorch=1.2.0
   - numpy=1.15.0
   - matplotlib=3.0.3
-  - pip 
+  - pip
+  - trimesh=3.22.5
+  - scipy=1.11.1
   - pip:
     - git+https://github.com/lanpa/tensorboardX.git
     - pytest==5.1.1

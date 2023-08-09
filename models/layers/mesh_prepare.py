@@ -1,6 +1,7 @@
-import numpy as np
-import os
 import ntpath
+import os
+
+import numpy as np
 
 
 def fill_mesh(mesh2fill, file: str, opt):
@@ -26,6 +27,7 @@ def fill_mesh(mesh2fill, file: str, opt):
     mesh2fill.features = mesh_data['features']
     mesh2fill.sides = mesh_data['sides']
 
+
 def get_mesh_path(file: str, num_aug: int):
     filename, _ = os.path.splitext(file)
     dir_name = os.path.dirname(filename)
@@ -36,8 +38,8 @@ def get_mesh_path(file: str, num_aug: int):
         os.makedirs(load_dir, exist_ok=True)
     return load_file
 
-def from_scratch(file, opt):
 
+def from_scratch(file, opt):
     class MeshPrep:
         def __getitem__(self, item):
             return eval('self.' + item)
@@ -56,11 +58,14 @@ def from_scratch(file, opt):
     faces, face_areas = remove_non_manifolds(mesh_data, faces)
     if opt.num_aug > 1:
         faces = augmentation(mesh_data, opt, faces)
+
     build_gemm(mesh_data, faces, face_areas)
+
     if opt.num_aug > 1:
         post_augmentation(mesh_data, opt)
     mesh_data.features = extract_features(mesh_data)
     return mesh_data
+
 
 def fill_from_file(mesh, file):
     mesh.filename = ntpath.split(file)[1]
@@ -126,14 +131,17 @@ def build_gemm(mesh, faces, face_areas):
     edges = []
     edges_count = 0
     nb_count = []
+
     for face_id, face in enumerate(faces):
         faces_edges = []
         for i in range(3):
             cur_edge = (face[i], face[(i + 1) % 3])
             faces_edges.append(cur_edge)
+
         for idx, edge in enumerate(faces_edges):
             edge = tuple(sorted(list(edge)))
             faces_edges[idx] = edge
+
             if edge not in edge2key:
                 edge2key[edge] = edges_count
                 edges.append(list(edge))
@@ -144,21 +152,27 @@ def build_gemm(mesh, faces, face_areas):
                 mesh.edge_areas.append(0)
                 nb_count.append(0)
                 edges_count += 1
+
             mesh.edge_areas[edge2key[edge]] += face_areas[face_id] / 3
+
         for idx, edge in enumerate(faces_edges):
             edge_key = edge2key[edge]
             edge_nb[edge_key][nb_count[edge_key]] = edge2key[faces_edges[(idx + 1) % 3]]
             edge_nb[edge_key][nb_count[edge_key] + 1] = edge2key[faces_edges[(idx + 2) % 3]]
             nb_count[edge_key] += 2
+
         for idx, edge in enumerate(faces_edges):
             edge_key = edge2key[edge]
             sides[edge_key][nb_count[edge_key] - 2] = nb_count[edge2key[faces_edges[(idx + 1) % 3]]] - 1
             sides[edge_key][nb_count[edge_key] - 1] = nb_count[edge2key[faces_edges[(idx + 2) % 3]]] - 2
+
     mesh.edges = np.array(edges, dtype=np.int32)
     mesh.gemm_edges = np.array(edge_nb, dtype=np.int64)
     mesh.sides = np.array(sides, dtype=np.int64)
     mesh.edges_count = edges_count
-    mesh.edge_areas = np.array(mesh.edge_areas, dtype=np.float32) / np.sum(face_areas) #todo whats the difference between edge_areas and edge_lenghts?
+    mesh.edge_areas = np.array(mesh.edge_areas, dtype=np.float32) / np.sum(
+        face_areas)  # todo whats the difference between edge_areas and edge_lenghts?
+    mesh.ve = np.array(mesh.ve, dtype=object)
 
 
 def compute_face_normals_and_areas(mesh, faces):
@@ -187,7 +201,7 @@ def post_augmentation(mesh, opt):
 
 def slide_verts(mesh, prct):
     edge_points = get_edge_points(mesh)
-    dihedral = dihedral_angle(mesh, edge_points).squeeze() #todo make fixed_division epsilon=0
+    dihedral = dihedral_angle(mesh, edge_points).squeeze()  # todo make fixed_division epsilon=0
     thr = np.mean(dihedral) + np.std(dihedral)
     vids = np.random.permutation(len(mesh.ve))
     target = int(prct * len(vids))
@@ -273,6 +287,7 @@ def rebuild_face(face, new_face):
             break
     return face
 
+
 def check_area(mesh, faces):
     face_normals = np.cross(mesh.vs[faces[:, 1]] - mesh.vs[faces[:, 0]],
                             mesh.vs[faces[:, 2]] - mesh.vs[faces[:, 1]])
@@ -313,13 +328,14 @@ def extract_features(mesh):
     set_edge_lengths(mesh, edge_points)
     with np.errstate(divide='raise'):
         try:
-            for extractor in [dihedral_angle, symmetric_opposite_angles, symmetric_ratios]:
+            for extractor in [dihedral_angle, symmetric_opposite_angles, symmetric_ratios, compute_face_normals,
+                              compute_triangle_area, compute_triangle_volume]:
                 feature = extractor(mesh, edge_points)
                 features.append(feature)
             return np.concatenate(features, axis=0)
         except Exception as e:
             print(e)
-            raise ValueError(mesh.filename, 'bad features')
+            raise ValueError(mesh.filename, 'bad features') from e
 
 
 def dihedral_angle(mesh, edge_points):
@@ -403,6 +419,7 @@ def get_normals(mesh, edge_points, side):
     normals /= div[:, np.newaxis]
     return normals
 
+
 def get_opposite_angles(mesh, edge_points, side):
     edges_a = mesh.vs[edge_points[:, side // 2]] - mesh.vs[edge_points[:, side // 2 + 2]]
     edges_b = mesh.vs[edge_points[:, 1 - side // 2]] - mesh.vs[edge_points[:, side // 2 + 2]]
@@ -426,9 +443,73 @@ def get_ratios(mesh, edge_points, side):
     d = np.linalg.norm(point_o - closest_point, ord=2, axis=1)
     return d / edges_lengths
 
+
 def fixed_division(to_div, epsilon):
     if epsilon == 0:
         to_div[to_div == 0] = 0.1
     else:
         to_div += epsilon
     return to_div
+
+
+# def compute_mean_curvature(mesh, edge_points):
+#     # Calculate vertex normals using the method mentioned earlier
+#     vertex_normals = compute_face_normals(mesh, edge_points)
+#
+#     # Initialize mean curvature array
+#     mean_curvature = np.zeros(vertices.shape[0])
+#
+#     # Iterate over each vertex
+#     for vertex_id in range(vertices.shape[0]):
+#         neighbors = np.where(faces == vertex_id)[0]
+#         curvatures = []
+#
+#         # Calculate curvature for each neighbor
+#         for neighbor_id in neighbors:
+#             neighbor_indices = faces[neighbor_id]
+#             # Calculate angle between vertex normals of the central vertex and the neighboring vertices
+#             angle = np.arccos(np.dot(vertex_normals[vertex_id], vertex_normals[neighbor_indices]))
+#             curvatures.append(angle)
+#
+#         # Compute mean curvature as the average of curvatures
+#         mean_curvature[vertex_id] = np.mean(curvatures)
+#
+#     return mean_curvature
+
+
+def compute_face_normals(mesh, edge_points):
+    normals_a = get_normals(mesh, edge_points, 0)
+    normals_b = get_normals(mesh, edge_points, 3)
+    return np.concatenate((normals_a, normals_b), axis=1).T
+
+def compute_triangle_volume(mesh, edge_points):
+    volume_a = triangle_volume(mesh, edge_points, 0)
+    volume_b = triangle_volume(mesh, edge_points, 3)
+    volume_a = volume_a.reshape(1, volume_a.shape[0])
+    volume_b = volume_b.reshape(1, volume_b.shape[0])
+    return np.concatenate((volume_a, volume_b), axis=0)
+
+def triangle_volume(mesh, edge_points, side):
+    edge_a = mesh.vs[edge_points[:, side // 2 + 2]] - mesh.vs[edge_points[:, side // 2]]
+    edge_b = mesh.vs[edge_points[:, 1 - side // 2]] - mesh.vs[edge_points[:, side // 2]]
+    base_area = triangle_area(mesh, edge_points, side)
+    height = np.linalg.norm(edge_b - edge_a, axis=1)  # You can use any edge length as the height
+    volume = base_area * height  # Calculate the volume
+    return volume
+
+
+def compute_triangle_area(mesh, edge_points):
+    area_a = triangle_area(mesh, edge_points, 0)
+    area_b = triangle_area(mesh, edge_points, 3)
+    area_a = area_a.reshape(1, area_a.shape[0])
+    area_b = area_b.reshape(1, area_b.shape[0])
+    return np.concatenate((area_a, area_b), axis=0)
+
+def triangle_area(mesh, edge_points, side):
+    edge_a = mesh.vs[edge_points[:, side // 2 + 2]] - mesh.vs[edge_points[:, side // 2]]
+    edge_b = mesh.vs[edge_points[:, 1 - side // 2]] - mesh.vs[edge_points[:, side // 2]]
+
+    cross_product = np.cross(edge_a, edge_b) # Calculate the cross product of the two sides
+    magnitude = np.linalg.norm(cross_product, axis=1) # Calculate the magnitude of the cross product
+    area = 0.5 * magnitude # Calculate the area using the formula A = 0.5 * ||cross_product||
+    return area
